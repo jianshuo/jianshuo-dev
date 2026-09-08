@@ -77,6 +77,33 @@ test("isModelRejected 只认「模型不被支持」，别的错一概不认", (
   assert.equal(isModelRejected(undefined), false);
 });
 
+test("isModelRejected 也认 404「模型不存在/无权访问」（2026-09-07 lab 事故同款）", () => {
+  // 同一个「模型被账号拒」有两种措辞、两种状态码，只认 400 那种会漏掉一半：
+  // lab 的写书链就是漏了这条，5 单整单失败退款（详见 claude-agent/src/book-legs.ts）。
+  assert.equal(isModelRejected({
+    code: "http_error", message: "HTTP 404",
+    detail: "The model `gpt-5.5` does not exist or you do not have access to it.",
+  }), true);
+  assert.equal(isModelRejected({
+    code: "http_error", message: "HTTP 400",
+    detail: `{"detail":"The 'gpt-5.6' model is not supported when using Codex with a ChatGPT account."}`,
+  }), true);
+});
+
+test("isModelRejected 不误伤自家的「不支持」错误", () => {
+  // engine.ts 自己会抛 "transparent output is not supported for edit"——
+  // 那是调用方参数搭配不对，换个模型重跑一万次也一样，绝不能当成换模型的理由。
+  assert.equal(isModelRejected({
+    code: "invalid_command",
+    message: "transparent output is not supported for edit (transparent+edit)",
+  }), false);
+  for (const detail of [
+    "compression is not supported for png",
+    "ENOENT: no such file or directory, open '/opt/paint/data/inputs/x.png'",
+    "--background is not supported by this provider",
+  ]) assert.equal(isModelRejected({ code: "http_error", message: "HTTP 400", detail }), false, detail);
+});
+
 test("parseEventLine maps percent, skips sse", () => {
   assert.deepEqual(
     parseEventLine('{"data":{"percent":95,"phase":"request_completed"},"kind":"progress","type":"request_completed"}'),

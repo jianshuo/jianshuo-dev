@@ -5,10 +5,25 @@ import type { Job } from "./store.js";
  * 上游长这样：{code:"http_error", message:"HTTP 400",
  *   detail:'{"detail":"The \'gpt-5.4\' model is not supported when using Codex with a ChatGPT account."}'}
  */
+const MODEL_REJECTED: RegExp[] = [
+  /model.{0,40}is not supported/i,
+  /model.{0,40}does not exist/i,
+  /do not have access to it/i,
+  /model[ _-]?not[ _-]?found/i,
+];
+
 export function isModelRejected(error?: { code?: string; message?: string; detail?: unknown }): boolean {
   if (!error) return false;
   const blob = `${error.message ?? ""} ${typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail ?? "")}`;
-  return /model is not supported/i.test(blob);
+  // 「模型被账号拒」有两种措辞、两种状态码（2026-09-07 在 VPS 上逐个实测）：
+  //   400  The 'gpt-5.6' model is not supported when using Codex with a ChatGPT account.
+  //   404  The model `gpt-5.5` does not exist or you do not have access to it.
+  // 只认前一种会漏掉一半——lab 的写书三腿链正是漏了 404 这条，2026-09-07
+  // 一天 5 单整单失败退款（同款判据见 claude-agent/src/book-legs.ts）。
+  // 全部限定在 model 一词附近：engine 自己就会抛 "transparent output is not
+  // supported for edit"，泛泛的 /is not supported/ 会把它误判成模型问题，
+  // 于是拿下一个模型再跑一遍必然的失败。单测钉了这条边界。
+  return MODEL_REJECTED.some((re) => re.test(blob));
 }
 
 export function buildArgs(job: Job, outPath: string, model?: string): string[] {
