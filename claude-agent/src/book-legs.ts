@@ -25,6 +25,7 @@ export function parseLegs(spec: string | undefined): BookLeg[] {
 //   ① 配额满（本意）
 //   ② 凭据失效（没登录/key 过期）——腿一样是废的，一样该换。漏了这类的话，
 //      codex 订阅哪天掉登录，链就会在第二条腿上直接认输，用户照样白等。
+//   ③ 模型被账号拒（模型不存在/不给这个账号用）——同理，腿是废的，该换。
 // 不命中 = 书本身写坏了（轮数耗尽、崩溃、超时、内容风控），换腿只会再烧一份
 // 别人的配额重蹈覆辙，直接认输。
 //
@@ -58,6 +59,21 @@ const QUOTA_PATTERNS: RegExp[] = [
   /log ?in again/i,                     // 同上的尾巴，三家掉登录文案共有
 ];
 
+// ③ 模型被账号拒 —— 这条腿的模型用不了，腿本身就是废的，该换（2026-09-07）。
+// 当天 42 单里 5 单栽在这里：kimi 撞配额正常换到 codex，而 codex 没设
+// BOOK_CODEX_MODEL、吃了 CLI 默认的 gpt-5.5，被这个 ChatGPT 账号拒掉；
+// 判据只认配额/凭据 → 判成「书本身写坏了」→ 第三条腿一次都没试就整单失败退款。
+// 两种措辞、两种状态码都要认（同日实测）：
+//   404  The model `gpt-5.5` does not exist or you do not have access to it.
+//   400  The 'gpt-5.6' model is not supported when using Codex with a ChatGPT account.
+// 都限定在 model 一词附近——否则任何 ENOENT / 「功能不支持」都会被当成换腿理由。
+const MODEL_REJECTED_PATTERNS: RegExp[] = [
+  /model.{0,40}does not exist/i,        // 404 前半句（模型名夹在中间，带反引号）
+  /do not have access to it/i,          // 404 后半句
+  /model.{0,40}is not supported/i,      // 400：「'gpt-5.6' model is not supported…」
+  /model[ _-]?not[ _-]?found/i,         // 机器码版
+];
+
 // 明确「不是配额」的错误：这些词出现时，即便文本里混进了上面某个词也不换腿。
 // error_max_turns 是书写太长撞轮数上限，high risk 是 Kimi 内容风控——
 // 两者换腿重跑必然重蹈覆辙。
@@ -70,6 +86,7 @@ export function shouldTryNextLeg(error: string | undefined | null): boolean {
   const s = String(error ?? "");
   if (!s) return false;
   if (NOT_QUOTA_PATTERNS.some((re) => re.test(s))) return false;
+  if (MODEL_REJECTED_PATTERNS.some((re) => re.test(s))) return true;
   return QUOTA_PATTERNS.some((re) => re.test(s));
 }
 

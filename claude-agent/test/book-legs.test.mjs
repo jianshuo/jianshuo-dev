@@ -108,3 +108,34 @@ test("没配凭据的腿被跳过，不浪费一次必败的重跑", () => {
   // 未声明的腿视为可用（codex 默认装着）
   assert.deepEqual(availableLegs(["kimi", "codex"], {}), ["kimi", "codex"]);
 });
+
+// ── 模型被账号拒 → 必须换腿（2026-09-07 事故）─────────────────────────
+// 当天 42 单里 5 单栽在这里：kimi 撞配额正常换到 codex，codex 因为没设
+// BOOK_CODEX_MODEL 而吃 CLI 默认的 gpt-5.5，被账号拒掉；判据只认配额/凭据，
+// 于是判成「书本身写坏了」→ 第三条腿（claude 订阅）一次都没试就整单失败退款。
+// 两条腿报的措辞和状态码还不一样，两种都得认。
+test("模型被账号拒（9/7 事故原文，两种措辞）都换腿", () => {
+  const notFound =                                  // codex 默认 gpt-5.5：404
+    "unexpected status 404 Not Found: The model `gpt-5.5` does not exist or " +
+    "you do not have access to it., url: https://chatgpt.com/backend-api/codex/responses";
+  const notSupported =                              // gpt-5.6：400，措辞完全不同
+    '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":' +
+    '"The \'gpt-5.6\' model is not supported when using Codex with a ChatGPT account."}}';
+  assert.equal(shouldTryNextLeg(notFound), true);
+  assert.equal(shouldTryNextLeg(notSupported), true);
+  for (const s of [
+    "The model `gpt-5.4` does not exist or you do not have access to it.",
+    "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+    "model_not_found",
+  ]) assert.equal(shouldTryNextLeg(s), true, s);
+});
+
+test("「不存在/不支持」只认模型那一种，别误伤文件与功能", () => {
+  // 模式限定在 model 附近，否则任何 ENOENT 都会被当成换腿理由白烧一份额度。
+  for (const s of [
+    "config file does not exist",
+    "ENOENT: no such file or directory, open '/opt/claude-agent/workspace/book.json'",
+    "this feature is not supported on your platform",
+    "compression is not supported",
+  ]) assert.equal(shouldTryNextLeg(s), false, s);
+});
