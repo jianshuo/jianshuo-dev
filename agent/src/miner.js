@@ -1333,7 +1333,7 @@ export async function mineOneAudio(audioKey, allKeys, uploaded, env) {
           };
           await writeArticle(audioKey, doc, env);
           await notifyStatus(scope, stem, "ready", env);
-          { const t = doc.articles?.[0]?.title; await sendPush(env, scope, { title: "文章已生成", body: t ? `《${t}》挖好了，点开看看` : "你的照片已成文", link: `voicedrop://article/${stem}` }); }
+          { const t = doc.articles?.[0]?.title; await sendPush(env, scope, { title: "文章已生成", body: t ? `《${t}》挖好了，点开看看` : "你的照片已成文", link: `voicedrop://article/${stem}`, source: "mine" }); }
           try { await maybeAutoShareCommunity(audioKey, env, log); } catch (e) { log("自动分享失败", { error: String(e) }); }
           log("看图写入完成", { articles: arts.length, pipeline: !!pipe });
           result = "mined";
@@ -1413,7 +1413,7 @@ export async function mineOneAudio(audioKey, allKeys, uploaded, env) {
     if (srt) await writeSrt(audioKey, srt, env);
     await notifyStatus(scope, stem, "ready", env);
     // APNs：成文是异步的（用户多半已离开 app），推一条让他知道回来看。
-    { const t = cleaned[0]?.title; await sendPush(env, scope, { title: "文章已生成", body: t ? `《${t}》挖好了，点开看看` : "你的录音已成文", link: `voicedrop://article/${stem}` }); }
+    { const t = cleaned[0]?.title; await sendPush(env, scope, { title: "文章已生成", body: t ? `《${t}》挖好了，点开看看` : "你的录音已成文", link: `voicedrop://article/${stem}`, source: "mine" }); }
     try { await maybeAutoShareCommunity(audioKey, env, log); } catch (e) { log("自动分享失败", { error: String(e) }); }
     log("写入完成", { articles: cleaned.length });
     result = "mined";
@@ -1434,7 +1434,7 @@ export async function mineOneAudio(audioKey, allKeys, uploaded, env) {
           await sendPush(env, env.ADMIN_SCOPE, {
             title: "挖矿连续失败熔断",
             body: `${stem} 连续失败 ${n} 次，已停止重试：${(mineErr || "?").slice(0, 80)}`,
-            threadId: "ops",
+            threadId: "ops", source: "ops",
           });
         } catch (_) {}
       }
@@ -1516,7 +1516,7 @@ async function mineOneText(textKey, uploaded, env) {
     };
     await writeArticle(textKey, doc, env);
     await notifyStatus(scope, stem, "ready", env);
-    { const t = cleaned?.[0]?.title; await sendPush(env, scope, { title: "文章已生成", body: t ? `《${t}》挖好了，点开看看` : "你的分享已成文", link: `voicedrop://article/${stem}` }); }
+    { const t = cleaned?.[0]?.title; await sendPush(env, scope, { title: "文章已生成", body: t ? `《${t}》挖好了，点开看看` : "你的分享已成文", link: `voicedrop://article/${stem}`, source: "mine" }); }
     try { await maybeAutoShareCommunity(textKey, env, log); } catch (e) { log("自动分享失败", { error: String(e) }); }
     log("写入完成", { articles: articles.length, titles: articles.map(a => a.title) });
     return (result = "mined");

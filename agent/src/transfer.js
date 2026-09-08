@@ -102,7 +102,7 @@ export async function handleTransferRoute(url, request, env) {
       await sendPush(env, to, {
         title: "收到算力",
         body: `有人转给你 ${suanli} 算力${note ? "：" + note : ""}`,
-        threadId: "transfer",
+        threadId: "transfer", source: "transfer",
       });
     } catch (e) { console.log("[transfer] push failed", String(e?.message || e)); }
   }

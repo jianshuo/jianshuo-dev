@@ -323,7 +323,7 @@ export async function handleReferralRoutes(url, request, env, fetcher, ctx) {
       await sendPush(env, owner, {
         title: "邀请成功",
         body: `你邀请的朋友装好了 VoiceDrop，算力 +${r1(uyToSuanli(q.beneficiaryUY))}`,
-        threadId: "referral",
+        threadId: "referral", source: "referral",
         link: "voicedrop://usage",
       });
     }

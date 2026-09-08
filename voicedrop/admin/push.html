@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>VoiceDrop · 推送日志</title>
+<link rel="stylesheet" href="./theme.css"/>
+<script>
+/* Standalone/preview fallback for the helpers the pages use. The production
+   server's /voicedrop/shared.js loads later and overrides these — safe either way. */
+window.$=window.$||function(s,r){return (r||document).querySelector(s);};
+window.esc=window.esc||function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');};
+</script>
+<style>
+.wrap{max-width:1120px;margin:0 auto;padding:26px 22px 90px}
+.sumline{color:var(--muted);font-size:.9rem;margin:0 0 18px}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 16px}
+.filters select,.filters input{font:inherit;font-size:.86rem;padding:7px 10px;border:1px solid var(--line);
+  border-radius:var(--r-sm,8px);background:var(--panel);color:inherit}
+.filters input{width:230px;font-family:var(--fm);font-size:.78rem}
+.tablecard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);
+  overflow:hidden;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse}
+thead th{font-size:.74rem;color:var(--muted);font-weight:700;text-align:left;padding:12px 14px;
+  background:var(--bg-soft);border-bottom:1px solid var(--line);letter-spacing:.02em;white-space:nowrap}
+tbody td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line2);vertical-align:top;font-size:.86rem}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--bg-sunk)}
+td.when{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--muted);font-size:.8rem}
+td.msg{max-width:420px}
+td.msg .t{font-weight:600}
+td.msg .b{color:var(--muted);font-size:.8rem;margin-top:2px;line-height:1.45}
+td.who{max-width:170px}
+td.who .nm{font-weight:600;font-size:.82rem}
+td.who .sub{color:var(--muted);font-family:var(--fm);font-size:.7rem;word-break:break-all}
+td.lk{max-width:230px}
+td.lk a{font-family:var(--fm);font-size:.74rem;word-break:break-all}
+td.lk .none{color:var(--muted);font-size:.78rem}
+.tagpill{display:inline-block;font-size:.7rem;font-weight:700;border-radius:5px;padding:1px 7px;white-space:nowrap}
+.src{background:var(--bg-sunk);color:var(--muted)}
+.r-ok{background:var(--ok-bg);color:var(--ok)}
+.r-rejected,.r-error{background:var(--err-bg);color:var(--err)}
+.r-gone,.r-no-token{background:var(--bg-sunk);color:var(--muted)}
+.r-unconfigured{background:var(--warn-bg);color:var(--warn)}
+.detail{color:var(--muted);font-family:var(--fm);font-size:.68rem;margin-top:3px;word-break:break-all}
+.more{display:flex;justify-content:center;margin:18px 0 0}
+</style>
+</head>
+<body>
+
+<div id="gate" hidden style="max-width:430px">
+  <svg class="gate-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="vdGate" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8714F"/><stop offset="1" stop-color="#C5431F"/></linearGradient></defs><path d="M16 2.5C16 2.5 6 13 6 20.2 6 25.9 10.5 30 16 30s10-4.1 10-9.8C26 13 16 2.5 16 2.5Z" fill="url(#vdGate)"/><circle cx="12.2" cy="20.6" r="3" fill="#fff" opacity="0.34"/></svg>
+  <h1>推送日志</h1>
+  <p>粘贴你的访问令牌（App「账户 → 访问令牌」复制的 anon_…） 查看全站发出的 APNs 推送。token 只存在本机浏览器，不上传。</p>
+  <input id="tok" type="password" placeholder="anon_… 访问令牌" autocomplete="off" spellcheck="false"/>
+  <div class="err" id="gateErr"></div>
+  <button class="btn primary block" id="enter">进入</button>
+</div>
+
+<div id="app" hidden>
+  <nav class="appbar">
+    <div class="appbar-in">
+      <a class="brand" href="./">
+        <svg class="mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="vdNav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8714F"/><stop offset="1" stop-color="#C5431F"/></linearGradient></defs><path d="M16 2.5C16 2.5 6 13 6 20.2 6 25.9 10.5 30 16 30s10-4.1 10-9.8C26 13 16 2.5 16 2.5Z" fill="url(#vdNav)"/><circle cx="12.2" cy="20.6" r="3" fill="#fff" opacity="0.34"/></svg>
+        <span class="name">VoiceDrop</span><span class="sub">控制台</span>
+      </a>
+      <div class="nav-tabs">
+        <a class="nav-tab" href="./">概览</a>
+        <a class="nav-tab" href="./reports.html">举报审核</a>
+        <a class="nav-tab" href="./usage.html">算力账本</a>
+        <a class="nav-tab" href="./feed.html">投喂账本</a>
+        <a class="nav-tab" href="./mine.html">挖文日志</a>
+        <a class="nav-tab" href="./llm.html">LLM 日志</a>
+        <a class="nav-tab" href="./feedback.html">用户反馈</a>
+        <a class="nav-tab" href="./refhits.html">访客 IP</a>
+        <a class="nav-tab active" href="./push.html">推送日志</a>
+      </div>
+      <div class="nav-actions">
+        <button class="btn ghost" id="refresh">刷新</button>
+        <button class="btn ghost" id="logout">退出</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <div class="pagehead">
+      <h1>推送日志</h1>
+      <span class="tag" id="updated"></span>
+    </div>
+    <div class="cards" id="cards"></div>
+    <p class="sumline">全站每一条发出的 APNs（含各种没发成的）· 保留 90 天 · 北京时间 · 「受理」只代表服务端确实发出去了，手机关了通知或开了专注模式照样不显示</p>
+    <div class="filters">
+      <select id="fSource"><option value="">全部来源</option></select>
+      <select id="fResult"><option value="">全部结果</option></select>
+      <input id="fUser" placeholder="按收件人筛：users/&lt;sub&gt;/" spellcheck="false"/>
+    </div>
+    <div id="tableWrap"></div>
+    <div class="more" id="moreWrap"></div>
+  </div>
+</div>
+
+<script src="/voicedrop/shared.js"></script>
+<script>
+const TKEY = 'vd_admin_sess';   // 存用户 session token（换 FILES_TOKEN 用）            // shared with the rest of /admin — token carries over
+let TOKEN = '';   // 换回来的 admin FILES_TOKEN，仅内存
+const el = (t, c, h) => { const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e; };
+
+const cn = ts => new Date(ts + 8*3600e3).toISOString().slice(5,16).replace('T',' ');
+
+// 来源 / 结果的中文名。后端存的是英文 key（好筛好对齐日志），显示时才翻译。
+const SRC = { mine:'挖文', book:'写书', ops:'运维', feedback:'反馈', topup:'充值',
+              devicelink:'登录', referral:'邀请', transfer:'转账', feed:'投喂', other:'其他' };
+const RES = { ok:'已受理', rejected:'APNs 拒收', gone:'token 失效', 'no-token':'无设备',
+              unconfigured:'未配置', error:'异常' };
+
+let cursor = 0;         // 翻页游标（0 = 从头）
+let rows = [];          // 已加载的全部行（追加式）
+let resultFilter = '';  // 结果筛选在前端做（结果只有 6 种，没必要来回打服务端）
+
+function qs(){
+  const p = new URLSearchParams({ limit: '100' });
+  if (cursor) p.set('cursor', cursor);
+  const s = $('#fSource').value; if (s) p.set('source', s);
+  const u = $('#fUser').value.trim(); if (u) p.set('user', u);
+  return p.toString();
+}
+
+async function fetchPage(){
+  const r = await fetch('https://jianshuo.dev/agent/push/log?' + qs(), { headers:{ Authorization:`Bearer ${TOKEN}` }});
+  if (r.status===401 || r.status===403) { logout('token 无效'); return null; }
+  if (!r.ok) throw new Error('加载失败 ' + r.status);
+  return r.json();
+}
+
+async function load(append){
+  if (!append) { cursor = 0; rows = []; $('#tableWrap').innerHTML = '<div class="empty-state"><span class="spin"></span> 读取中…</div>'; $('#moreWrap').innerHTML=''; }
+  let data;
+  try { data = await fetchPage(); } catch(e){ $('#tableWrap').innerHTML = `<div class="empty-state">${esc(e.message)}</div>`; return; }
+  if (!data) return;
+  rows = rows.concat(data.rows || []);
+  cursor = data.nextCursor || 0;
+  if (data.stats) renderStats(data.stats);
+  $('#updated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN');
+  renderTable();
+}
+
+function renderStats(st){
+  $('#cards').innerHTML = '';
+  const ok = (st.byResult || []).find(x => x.result === 'ok');
+  const rate = st.total ? Math.round((ok ? ok.n : 0) / st.total * 100) : 0;
+  for (const [c,n,l] of [['', st.total, '累计推送'], ['bal', st.last24h, '最近 24 小时'], ['spent', rate + '%', 'APNs 受理率']])
+    $('#cards').append(el('div','card '+c, `<div class="n">${n}</div><div class="l">${l}</div>`));
+
+  // 来源下拉照着真实数据填（有哪些来源就列哪些，不写死一份会过期的清单）。
+  const keep = $('#fSource').value;
+  $('#fSource').innerHTML = '<option value="">全部来源</option>' +
+    (st.bySource || []).map(x => `<option value="${esc(x.source)}">${esc(SRC[x.source] || x.source || '其他')} · ${x.n}</option>`).join('');
+  $('#fSource').value = keep;
+  const keepR = $('#fResult').value;
+  $('#fResult').innerHTML = '<option value="">全部结果</option>' +
+    (st.byResult || []).map(x => `<option value="${esc(x.result)}">${esc(RES[x.result] || x.result)} · ${x.n}</option>`).join('');
+  $('#fResult').value = keepR;
+}
+
+function renderTable(){
+  const list = resultFilter ? rows.filter(r => r.result === resultFilter) : rows;
+  if (!list.length){ $('#tableWrap').innerHTML='<div class="empty-state">没有符合条件的推送记录。</div>'; $('#moreWrap').innerHTML=''; return; }
+
+  const trs = list.map(r => {
+    // link 就是这张表存在的理由：通知在手机上点掉了，回到这里还能点回去。
+    // 用 iPhone 打开本页时 voicedrop:// 会直接唤起 App；桌面上点了没反应，属正常。
+    const link = r.link
+      ? `<a href="${esc(r.link)}">${esc(r.link)}</a>`
+      : '<span class="none">—</span>';
+    return `<tr>
+      <td class="when">${cn(r.ts)}</td>
+      <td><span class="tagpill src">${esc(SRC[r.source] || r.source || '其他')}</span></td>
+      <td class="who"><div class="nm">${esc(r.userName || '—')}</div><div class="sub">${esc(r.userSub)}</div></td>
+      <td class="msg"><div class="t">${esc(r.title)}</div>${r.body ? `<div class="b">${esc(r.body)}</div>` : ''}</td>
+      <td class="lk">${link}</td>
+      <td><span class="tagpill r-${esc(r.result)}">${esc(RES[r.result] || r.result)}</span>${r.detail ? `<div class="detail">${esc(r.detail)}</div>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  $('#tableWrap').innerHTML = `<div class="tablecard"><table>
+    <thead><tr><th>时间</th><th>来源</th><th>推给谁</th><th>标题 / 正文</th><th>点开去哪</th><th>结果</th></tr></thead>
+    <tbody>${trs}</tbody></table></div>`;
+
+  $('#moreWrap').innerHTML = cursor ? '<button class="btn ghost" id="more">加载更多</button>' : '';
+  if (cursor) $('#more').onclick = () => load(true);
+}
+
+$('#fSource').onchange = () => load(false);
+$('#fResult').onchange = () => { resultFilter = $('#fResult').value; renderTable(); };
+$('#fUser').addEventListener('keydown', e => { if (e.key === 'Enter') load(false); });
+
+// ---- gate / boot (mirrors index/llm/mine/refhits) ----
+function showGate(msg){ $('#app').hidden=true; $('#gate').hidden=false; $('#gateErr').textContent=msg||''; $('#tok').focus(); }
+function logout(msg){ TOKEN=''; localStorage.removeItem(TKEY); showGate(msg); }
+async function enter(){
+  const v=$('#tok').value.trim();
+  if(!v){ $('#gateErr').textContent='请粘贴你的 session token'; return; }
+  $('#gateErr').textContent='校验中…';
+  let ft; try{ ft=await vdAdminExchange(v); }
+  catch(e){ $('#gateErr').textContent=e.message; return; }
+  TOKEN=ft; localStorage.setItem(TKEY,v); $('#gate').hidden=true; $('#app').hidden=false; load(false);
+}
+$('#enter').onclick=enter;
+$('#tok').addEventListener('keydown',e=>{ if(e.key==='Enter')enter(); });
+$('#refresh').onclick=()=>load(false);
+$('#logout').onclick=()=>logout();
+(async()=>{
+  const sess=localStorage.getItem(TKEY)||'';
+  if(!sess){ showGate(); return; }
+  try{ TOKEN=await vdAdminExchange(sess); }
+  catch(e){ localStorage.removeItem(TKEY); showGate(e.message||''); return; }
+  $('#app').hidden=false; load(false);
+})();
+</script>
+</body>
+</html>

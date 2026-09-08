@@ -473,6 +473,87 @@ export async function coreDeletePushToken(env, scope) {
   catch (e) { console.error("[core-db] deletePushToken:", e && e.message); return false; }
 }
 
+// ── push_log（推送流水；2026-09-08）─────────────────────────────────────────
+// 每条发出去的 APNs 留一行。写入点唯一：agent/src/push.js 的 sendPush()。
+// 与本文件其余函数同约定：绝不 throw——记日志不能成为推送的新故障点。
+
+/// 追加一行。best-effort：D1 不可用或写失败都只 console.error，返回 false。
+export async function coreWritePushLog(env, rec) {
+  const d = db(env);
+  if (!d || !rec || !rec.userSub) return false;
+  try {
+    await d.prepare(
+      "INSERT INTO push_log (ts, user_sub, source, title, body, link, thread_id, result, detail, push_env) " +
+      "VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ).bind(
+      rec.ts || Date.now(), String(rec.userSub), rec.source || null,
+      String(rec.title || "").slice(0, 200), String(rec.body || "").slice(0, 500),
+      rec.link || null, rec.threadId || null,
+      String(rec.result || "error"), rec.detail ? String(rec.detail).slice(0, 300) : null,
+      rec.pushEnv || null,
+    ).run();
+    return true;
+  } catch (e) { console.error("[core-db] writePushLog:", e && e.message); return false; }
+}
+
+/// 后台列表：时间倒序翻页（cursor = 上一页最后一行的 id，取更小的 id）。
+/// 可按 source / userSub 过滤。带上 user_profiles.name 让 admin 页能显示人名。
+/// → {rows:[...], nextCursor}；D1 不可用 → null。
+export async function coreListPushLog(env, { limit = 100, cursor = 0, source = "", userSub = "" } = {}) {
+  const d = reader(env);
+  if (!d) return null;
+  const n = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const where = ["1=1"], binds = [];
+  if (cursor) { where.push("p.id < ?"); binds.push(Number(cursor)); }
+  if (source) { where.push("p.source = ?"); binds.push(String(source)); }
+  if (userSub) { where.push("p.user_sub = ?"); binds.push(String(userSub)); }
+  try {
+    const r = await d.prepare(
+      "SELECT p.id, p.ts, p.user_sub, p.source, p.title, p.body, p.link, p.thread_id, " +
+      "       p.result, p.detail, p.push_env, u.name AS user_name " +
+      "FROM push_log p LEFT JOIN user_profiles u ON u.user_sub = p.user_sub " +
+      `WHERE ${where.join(" AND ")} ORDER BY p.id DESC LIMIT ?`
+    ).bind(...binds, n + 1).all();
+    const all = r?.results || [];
+    const rows = all.slice(0, n).map((x) => ({
+      id: x.id, ts: x.ts, userSub: x.user_sub, userName: x.user_name || "",
+      source: x.source || "", title: x.title, body: x.body || "", link: x.link || "",
+      threadId: x.thread_id || "", result: x.result, detail: x.detail || "", pushEnv: x.push_env || "",
+    }));
+    return { rows, nextCursor: all.length > n ? rows[rows.length - 1].id : 0 };
+  } catch (e) { console.error("[core-db] listPushLog:", e && e.message); return null; }
+}
+
+/// 统计（后台顶部卡片 + 来源下拉的选项）。
+/// → {total, last24h, bySource:[{source,n}], byResult:[{result,n}]}；D1 不可用 → null。
+export async function corePushLogStats(env) {
+  const d = reader(env);
+  if (!d) return null;
+  try {
+    const since = Date.now() - 86400000;
+    const [tot, day, bySrc, byRes] = await d.batch([
+      d.prepare("SELECT COUNT(*) AS n FROM push_log"),
+      d.prepare("SELECT COUNT(*) AS n FROM push_log WHERE ts>?").bind(since),
+      d.prepare("SELECT source, COUNT(*) AS n FROM push_log GROUP BY source ORDER BY n DESC"),
+      d.prepare("SELECT result, COUNT(*) AS n FROM push_log GROUP BY result ORDER BY n DESC"),
+    ]);
+    return {
+      total: tot?.results?.[0]?.n || 0,
+      last24h: day?.results?.[0]?.n || 0,
+      bySource: (bySrc?.results || []).map((x) => ({ source: x.source || "", n: x.n })),
+      byResult: (byRes?.results || []).map((x) => ({ result: x.result, n: x.n })),
+    };
+  } catch (e) { console.error("[core-db] pushLogStats:", e && e.message); return null; }
+}
+
+/// 过期清理（保留期由调用方定；跟 refhits 一样挂在 6h cron 上）。
+export async function coreCleanupPushLog(env, cutoffTs) {
+  const d = db(env);
+  if (!d) return;
+  try { await d.prepare("DELETE FROM push_log WHERE ts<?").bind(cutoffTs).run(); }
+  catch (e) { console.error("[core-db] cleanupPushLog:", e && e.message); }
+}
+
 // ── community_reports（P3；原 community/reports/<shareId>.json）───────────────
 // → {shareId, status, firstAt, reporters:[]} | false（无）| null（D1 不可用）。
 

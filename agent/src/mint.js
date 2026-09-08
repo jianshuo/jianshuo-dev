@@ -149,7 +149,7 @@ export async function handleMintRoutes(url, request, env) {
     await sendPush(env, post.owner, {
       title: "文章被投喂了",
       body: `${feederName} 投喂了《${title || "无题"}》，算力 +${r1(uyToSuanli(q.beneficiaryUY))}`,
-      threadId: "feed",
+      threadId: "feed", source: "feed",
       link: "voicedrop://usage",
     });
 

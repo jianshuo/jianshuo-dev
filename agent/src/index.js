@@ -21,7 +21,7 @@ import { sendPush } from "./push.js";
 import { runMine, scopesWithWork, MINE_RESUME_MS, restyleArticle, backfillSessionPhotos, PBF_GRACE_MS } from "./miner.js";
 import { buildHistoryMessages, HISTORY_MAX_TURNS } from "./history.js";
 import { withTopLevelArticles } from "../../functions/lib/article-store.js";
-import { coreCleanupRefhits } from "../../functions/lib/core-db.js";
+import { coreCleanupRefhits, coreListPushLog, corePushLogStats, coreCleanupPushLog } from "../../functions/lib/core-db.js";
 import { verifySession, anonScopeFromToken, bearerToken } from "../../functions/lib/auth.js";
 import { buildBroadcastMessage, createPairing, verifyPairing, completePairing, resolveMatchingScopes, genDistinctCodes, CODE_TTL_MS } from "./devicelink.js";
 import { writeLlmLog } from "./llmlog.js";
@@ -946,7 +946,7 @@ export async function handleUsageRoute(url, request, env) {
     await sendPush(env, scope, {
       title: "书写好了",
       body: title ? `《${title}》已经出炉，点开看看` : "你的书已经出炉，点开看看",
-      link: `https://voicedrop.cn/books/${slug}/`,
+      link: `https://voicedrop.cn/books/${slug}/`, source: "book",
     });
     return J({ ok: true });
   }
@@ -961,8 +961,27 @@ export async function handleUsageRoute(url, request, env) {
     const title = String(b.title || "").slice(0, 60);
     const body = String(b.body || "").slice(0, 200);
     if (!title) return J({ error: "empty" }, 400);
-    await sendPush(env, env.ADMIN_SCOPE, { title, body, link: String(b.link || "voicedrop://settings") });
+    await sendPush(env, env.ADMIN_SCOPE, { title, body, link: String(b.link || "voicedrop://settings"), source: "ops" });
     return J({ ok: true });
+  }
+
+  // 推送流水（2026-09-08）：后台 /voicedrop/admin/push.html 读这里，看全站每一条
+  // 发出去的 APNs——通知在手机上点掉就没了，这张表是唯一能回溯「推的是什么、
+  // 该跳去哪」的地方。link 那列在页面上可点，等于把点掉的通知捡回来。
+  // 鉴权：FILES_TOKEN（与 refhits / usage 等其他 admin API 同一把 master token）。
+  // stats 只在首页（无 cursor）算，翻页时不重复扫全表。
+  if (url.pathname === "/agent/push/log" && request.method === "GET") {
+    if (!isAdmin) return J({ error: "not-admin" }, 403);
+    const cursor = Number(url.searchParams.get("cursor") || 0) || 0;
+    const page = await coreListPushLog(env, {
+      limit: Number(url.searchParams.get("limit") || 100),
+      cursor,
+      source: url.searchParams.get("source") || "",
+      userSub: url.searchParams.get("user") || "",
+    });
+    if (!page) return J({ error: "core-unavailable" }, 503);
+    const stats = cursor ? null : await corePushLogStats(env);
+    return J({ ...page, ...(stats ? { stats } : {}) });
   }
 
   if (url.pathname === "/agent/usage/ledger" && request.method === "GET") {
@@ -1026,7 +1045,7 @@ export async function handleUsageRoute(url, request, env) {
       pushed = await sendPush(env, sub, {
         title: String(b.push.title).slice(0, 60),
         body: String(b.push.body || "").slice(0, 200),
-        link: String(b.push.link || "voicedrop://settings"),
+        link: String(b.push.link || "voicedrop://settings"), source: "topup",
       });
     }
     return J({ ok: true, user_sub: sub, suanli: b.suanli, cost_yuan: r2(b.suanli / RATE), expires_at: expiresAt, pushed });
@@ -1335,7 +1354,7 @@ export default {
         await sendPush(env, env.ADMIN_SCOPE, {
           title: `VoiceDrop 反馈 · ${who}`,
           body: text.slice(0, 180),
-          threadId: "user-feedback",
+          threadId: "user-feedback", source: "feedback",
         });
       })());
       return J({ ok: true });
@@ -1612,7 +1631,7 @@ export default {
         await sendPush(env, scope, {
           title: "有新设备要登录",
           body: "点开确认，查看验证码",
-          link: `voicedrop://link/${pairingId}`,
+          link: `voicedrop://link/${pairingId}`, source: "devicelink",
         });
       }
       return Response.json({ ok: true, pairingId, matchCount: scopes.length });
@@ -1660,7 +1679,7 @@ export default {
         await sendPush(env, result.scope, {
           title: "确认登录",
           body: "点开完成新设备登录",
-          link: `voicedrop://link/${pairingId}`,
+          link: `voicedrop://link/${pairingId}`, source: "devicelink",
         });
       }
       // never leak the matched scope to the new device
@@ -1748,7 +1767,7 @@ export default {
               await sendPush(env, env.ADMIN_SCOPE, {
                 title: "voicedrop.cn 探活失败",
                 body: `连续 ${alert.fails} 次不可达——腾讯云接入点可能挂了。回滚: DNS 改回 CNAME jianshuo-dev.pages.dev(见 infra/voicedrop-cn/README)`,
-                threadId: "ops",
+                threadId: "ops", source: "ops",
               });
             }
           }
@@ -1762,7 +1781,7 @@ export default {
               await sendPush(env, env.ADMIN_SCOPE, {
                 title: `服务端 ${a.cls} 报警`,
                 body: `${a.route} 最近 15 分钟 ${a.cls} × ${a.count}`,
-                threadId: "ops",
+                threadId: "ops", source: "ops",
               });
             }
           }
@@ -1775,6 +1794,9 @@ export default {
     if (env.USAGE) ctx.waitUntil(publishMintRate(env, env.USAGE, Date.now()));
     // refhits 过期清理（对齐原 R2 lifecycle 2 天；存储迁移 P1）。
     ctx.waitUntil(coreCleanupRefhits(env, Date.now() - 2 * 86400000));
+    // 推送流水过期清理（保留 90 天——够回溯一整个季度的「这条通知当初是啥」，
+    // 又不至于让表无限长）。
+    ctx.waitUntil(coreCleanupPushLog(env, Date.now() - 90 * 86400000));
   },
 };
 

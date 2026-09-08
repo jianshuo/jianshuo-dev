@@ -116,8 +116,9 @@ export function fakeD1(migrationSql) {
       const stmt = db.prepare(sql);
       let args = [];
       const api = {
+        __reader: stmt.reader,   // batch 靠它区分读/写（真 D1 的 batch 两者都收）
         bind(...a) { args = a; return api; },
-        run() { const r = stmt.run(...args); return { success: true, meta: { changes: r.changes, last_row_id: r.lastInsertRowid } }; },
+        run() { const r = stmt.run(...args); return { success: true, results: [], meta: { changes: r.changes, last_row_id: r.lastInsertRowid } }; },
         first(col) { const row = stmt.get(...args); if (col != null) return row ? row[col] : null; return row ?? null; },
         all() { return { results: stmt.all(...args) }; },
       };
@@ -127,7 +128,7 @@ export function fakeD1(migrationSql) {
       const results = [];
       const txn = db.transaction(() => {
         for (const s of statements) {
-          results.push(s.run());
+          results.push(s.__reader ? { success: true, ...s.all() } : s.run());
         }
       });
       txn();
@@ -150,6 +151,6 @@ let _coreSqlCache = null;
 export function coreSql() {
   if (_coreSqlCache) return _coreSqlCache;
   const f = (name) => readFileSync(fileURLToPath(new URL("../migrations-core/" + name, import.meta.url)), "utf8");
-  _coreSqlCache = f("0001_core.sql") + "\n" + f("0002_articles_recordings.sql") + "\n" + f("0003_identity_push_reports.sql") + "\n" + f("0004_prompt_shares_borrowed.sql");
+  _coreSqlCache = f("0001_core.sql") + "\n" + f("0002_articles_recordings.sql") + "\n" + f("0003_identity_push_reports.sql") + "\n" + f("0004_prompt_shares_borrowed.sql") + "\n" + f("0005_push_log.sql");
   return _coreSqlCache;
 }
