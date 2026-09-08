@@ -21,7 +21,7 @@ test("loadConfig throws when secrets missing", () => {
 
 test("codexModels：缺省钉死候选序列，CODEX_MODELS 可覆盖", () => {
   const base = { API_TOKEN: "t", CALLBACK_SIGNING_SECRET: "s" };
-  // 缺省第一个必须是实测能用的那个（2026-09-06：账号只认 gpt-5.4-mini）
+  // 缺省第一个必须是实测能用的那个（2026-09-07 复测：mini 与 gpt-5.4 均可用，5.5/5.6 全拒）
   assert.equal(loadConfig(base as any).codexModels[0], "gpt-5.4-mini");
   assert.ok(loadConfig(base as any).codexModels.length >= 2);
   assert.deepEqual(

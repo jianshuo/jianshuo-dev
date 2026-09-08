@@ -2,8 +2,11 @@ import type { Job } from "./store.js";
 
 /**
  * 「这个模型你的账号用不了」——换模型重试的判据，别的错一律不换（换了也是白换）。
- * 上游长这样：{code:"http_error", message:"HTTP 400",
- *   detail:'{"detail":"The \'gpt-5.4\' model is not supported when using Codex with a ChatGPT account."}'}
+ * 上游有两种长相（措辞和状态码都不同，两种都要认）：
+ *   {code:"http_error", message:"HTTP 400", detail:'{"detail":"The \'gpt-5.6\' model is
+ *     not supported when using Codex with a ChatGPT account."}'}
+ *   {code:"http_error", message:"HTTP 404", detail:"The model `gpt-5.5` does not exist
+ *     or you do not have access to it."}
  */
 const MODEL_REJECTED: RegExp[] = [
   /model.{0,40}is not supported/i,

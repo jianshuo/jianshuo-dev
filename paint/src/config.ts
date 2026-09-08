@@ -16,7 +16,8 @@ export interface Config {
   codexHome?: string;
   /**
    * Codex 外层模型的候选序列，按顺序试，前一个被账号拒了就换下一个。
-   * CLI 自带的默认（v0.7.1 是 gpt-5.4）会随账号能开的模型漂——2026-09-06 全线
+   * CLI 自带的默认会随 CLI 升级和账号权限两头漂（v0.7.1 是 gpt-5.4，
+   * codex-cli 0.142.5 已升到 gpt-5.5，而 5.5 这个账号根本没有）——2026-09-06 全线
    * 出图失败就是这么来的：`HTTP 400 The 'gpt-5.4' model is not supported when
    * using Codex with a ChatGPT account`，而 systemctl 照样 active、journalctl
    * 一声不吭（错误只落进 data/jobs/<id>.json）。所以模型必须自己钉死 + 留后路。
@@ -27,7 +28,14 @@ export interface Config {
   maxPromptChars: number;
 }
 
-/** 2026-09-06 实测这个 ChatGPT 账号只认 gpt-5.4-mini；gpt-5.4/-pro/gpt-5.1-codex 全 400。 */
+/**
+ * 候选序列。账号能开哪些模型**会变**，所以这里记的是「最后一次实测」而非定论：
+ *   2026-09-06  gpt-5.4 被拒（400），当时只有 gpt-5.4-mini 能用 → 才有了这个序列
+ *   2026-09-07  逐个复测：gpt-5.4-mini ✅ / gpt-5.4 ✅（已恢复）/ gpt-5.5 ❌ 404
+ *               / gpt-5.6、-mini、-codex ❌ 400（CLI 连元数据都没有）
+ * 所以两条候选目前都活着；上限是 gpt-5.4。真要探只能逐个 `-m` 真跑一次——
+ * `models list` 只列本地预设，不反映账号真实可用集。
+ */
 const DEFAULT_CODEX_MODELS = ["gpt-5.4-mini", "gpt-5.4"];
 
 function parseModels(raw: string | undefined): string[] {
