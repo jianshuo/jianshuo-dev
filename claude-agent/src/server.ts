@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { parseLegs, availableLegs, shouldTryNextLeg, type BookLeg } from "./book-legs.js";
+import {
+  writeInflight, removeInflight, listInflight, canRetry, inflightId,
+  type Inflight, type InflightCreate, type InflightRevise,
+} from "./inflight.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -586,6 +590,18 @@ const RESUME_HINT =
   `动笔前先列一下 ${WORKSPACE}/ 下本单的工作目录，如果已有 book.json / 章节 / reviews，` +
   `就接着把它写完并发布，**不要另起一本新书、不要换 slug**。`;
 
+// 服务重启后续跑的补充提示。与换腿的 RESUME_HINT 同理但原因不同、要求更具体：
+// 半成品可能已经很完整——9/8《嘟嘟和山上的灯塔》被 restart 杀掉时 14 页 14 图全在，
+// 只差发布；这时最怕引擎「重新来过」把图重画一遍、把章节重写一遍。
+function resumeAfterRestartHint(jobId?: string): string {
+  return (
+    `\n\n补充（本单是服务器重启后的续跑）：上一次尝试被服务重启打断，很可能已经写了一部分甚至接近完成——` +
+    `动笔前先列一下 ${WORKSPACE}/ 下本单的工作目录` + (jobId ? `（book.json 里 jobId=「${jobId}」的那个）` : "") +
+    `，用 build.mjs status 看每章是 done / 待发(有稿) / 待写：有稿的直接发布，缺的补写，缺封面就补封面。` +
+    `**不要另起一本新书、不要换 slug、不要重画已有的插图、不要重写已过审的章节。**`
+  );
+}
+
 const runBookEngine = async (
   prompt: string,
   onThread?: (id: string) => void,
@@ -696,6 +712,8 @@ function runCodexExec(prompt: string, onThread?: (id: string) => void): Promise<
 //   - 本地 bookmeta/ 目录只剩两个用途：老条目的读回退（读到即懒迁移上 R2）和
 //     _unmatched 落档。sessionId：codex 线程号（CODEX_HOME/sessions/ 可续）。
 const BOOKMETA_DIR = process.env.BOOKMETA_DIR ?? join(__dirname, "..", "bookmeta");
+// 在飞登记（2026-09-08）：开工落档、引擎返回即销档；启动时还在 = 孤儿，续跑。见 src/inflight.ts。
+const INFLIGHT_DIR = process.env.INFLIGHT_DIR ?? join(__dirname, "..", "inflight");
 const FILES_API = "https://jianshuo.dev/files/api";
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -987,9 +1005,21 @@ async function fetchAuthorName(auth: string | undefined): Promise<string> {
 }
 
 function runBookJob(seed: string, scope: string, author: string, auth?: string) {
-  const jobId = randomUUID();
-  const startedAt = Date.now();
-  console.log(`[book] start scope=${scope} author=${author || "-"} job=${jobId} seed=${seed.slice(0, 120).replace(/\n/g, " ")}`);
+  const rec: InflightCreate = {
+    kind: "create", jobId: randomUUID(), seed, scope, author, auth, startedAt: Date.now(), attempts: 1,
+  };
+  // 先登记再开跑。登记失败只留日志：登记是为了崩溃恢复，不能反过来挡住正常开工。
+  writeInflight(INFLIGHT_DIR, rec).catch((e) => console.error("[inflight] write failed", e));
+  startBookJob(rec);
+}
+
+// 真正开跑。新单与启动时续跑共用这一个入口：rec.attempts > 1 即续跑——jobId /
+// startedAt 沿用原单（登记簿 thread 条目靠 startedAt 对号，退款 ref 靠 jobId 幂等），
+// prompt 追「先查半成品别另起」。
+function startBookJob(rec: InflightCreate) {
+  const { jobId, seed, scope, author, auth, startedAt } = rec;
+  const resumed = rec.attempts > 1;
+  console.log(`[book] ${resumed ? `resume(第 ${rec.attempts} 次)` : "start"} scope=${scope} author=${author || "-"} job=${jobId} seed=${seed.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author
     ? `作者署名「${author}」——book.json 的 author 字段用这个名字，封面/页脚照此署名。`
     : `提交者没有留名字——book.json 不写 author 字段，全书不署名（不要默认署任何人名）。`;
@@ -998,12 +1028,13 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
     `任务：写一本书。${byline}\n` +
     `本次写书任务号 jobId=「${jobId}」——建 book.json 时把它原样写进顶层 "jobId" 字段（登记簿要靠它对号，别漏）。\n` +
     (scope ? `这本书的产权归属 owner=「${scope}」——建 book.json 时把它原样写进顶层 "owner" 字段（谁能在线修改这本书以此为准）。\n` : "") +
-    `种子：\n${seed}`;
+    `种子：\n${seed}` +
+    (resumed ? resumeAfterRestartHint(jobId) : "");
   let sessionId = "";
   // 边跑边登记：slug 一出现（建筑师落 book.json，约 1 分钟内）就先写 bookmeta
   // （status running）——只在收尾登记的话，进程中途死掉这本书就没有主人
   // （2026-08-20 部署重启掐死在跑任务，实锤丢过一次）。
-  let earlySlug = "";
+  let earlySlug = rec.slug ?? "";
   const reg = setInterval(async () => {
     try {
       const hit = await findBookByJobId(jobId);
@@ -1011,6 +1042,8 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
       clearInterval(reg);
       const slug: string = hit.book.slug;
       earlySlug = slug;
+      // slug 回填进在飞登记：续跑/放弃时省一次反查，也让 deploy.sh 的提示能报书名。
+      if (rec.slug !== slug) { rec.slug = slug; writeInflight(INFLIGHT_DIR, rec).catch(() => {}); }
       // 确定性兜底注入（skill 已要求写，这里保证一定有；只在创建期，修书不受影响；
       // build.mjs 每次发布都从盘上重读 book.json，注入不会被冲掉）：
       //   - 绘本缺省不上架：type=childrens 没写 hidden → 补 "hidden": true；
@@ -1051,6 +1084,9 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
       const out = await runBookEngine(prompt, (id) => {
         sessionId = id;
       }, { newBook: true });
+      // 引擎一返回就销档：后面的收尾都是幂等的快 HTTP 调用；登记留着反而会在收尾
+      // 中途重启时把一本已退款/已发布的书再跑一遍。
+      await removeInflight(INFLIGHT_DIR, rec);
       ok = out.ok;
       reply = out.reply;
       console.log(`[book] done scope=${scope} thread=${out.threadId || "-"}` + (ok ? "" : ` ERROR=${out.error}`));
@@ -1059,6 +1095,7 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
         await refundBook(auth, { ref: jobId });   // 预扣一口价没写成——原数退回
       }
     } catch (e) {
+      await removeInflight(INFLIGHT_DIR, rec);
       console.error("[book] job failed", e);
       // 引擎抛异常（超时/崩溃）同样扣了钱没产出，退款；ref=jobId 幂等，与上面正常
       // 失败分支互斥（try 走完不进 catch），双保险不会双退。
@@ -1112,8 +1149,11 @@ function runBookJob(seed: string, scope: string, author: string, auth?: string) 
 
 // 修书 job：不 resume 写书旧线程（背着整段历史只多花钱）——每次修改都是全新
 // codex exec，以工作目录/线上成书这些「文件」为真源。
-function runReviseJob(slug: string, scope: string, author: string, instruction: string, entryTs: number, auth?: string) {
-  console.log(`[revise] start slug=${slug} scope=${scope} instr=${instruction.slice(0, 120).replace(/\n/g, " ")}`);
+// 与写书同款在飞登记：handleBookRevise 落档后调这里；启动时续跑也走这里（attempts > 1）。
+function runReviseJob(rec: InflightRevise) {
+  const { slug, scope, author, instruction, entryTs, auth } = rec;
+  const resumed = rec.attempts > 1;
+  console.log(`[revise] ${resumed ? `resume(第 ${rec.attempts} 次)` : "start"} slug=${slug} scope=${scope} instr=${instruction.slice(0, 120).replace(/\n/g, " ")}`);
   const byline = author ? `这本书署名「${author}」，改动不要动署名。` : "这本书不署名，保持不署名。";
   const prompt =
     `${CODEX_BOOK_PREAMBLE}\n\n` +
@@ -1121,12 +1161,14 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
     `slug：${slug}\n${byline}\n` +
     `书的主人提出的修改指令：\n${instruction}\n\n` +
     `要求：只改与指令相关的章节/目录/封面，其余一律不动；改完把受影响的页面重新发布；` +
-    `最后一条消息只输出一段给书的主人看的「修改说明」（200 字以内，说清改了什么、动了哪几章），不要别的寒暄。`;
+    `最后一条消息只输出一段给书的主人看的「修改说明」（200 字以内，说清改了什么、动了哪几章），不要别的寒暄。` +
+    (resumed ? resumeAfterRestartHint() : "");
   (async () => {
     try {
       const out = await runBookEngine(prompt, (id) => {
         patchThreadEntry(slug, entryTs, { sessionId: id }).catch(() => {});
       });
+      await removeInflight(INFLIGHT_DIR, rec);   // 引擎返回即销档（理由同写书）
       await patchThreadEntry(slug, entryTs, {
         status: out.ok ? "done" : "failed",
         ...(out.reply ? { reply: out.reply.trim().slice(0, 4000) } : {}),
@@ -1139,11 +1181,57 @@ function runReviseJob(slug: string, scope: string, author: string, instruction: 
         await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 修书没改成——退回预扣的 40
       }
     } catch (e: any) {
+      await removeInflight(INFLIGHT_DIR, rec);
       console.error("[revise] job failed", e);
       await patchThreadEntry(slug, entryTs, { status: "failed", error: String(e?.message ?? e) }).catch(() => {});
       await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 引擎崩溃同样退
     }
   })();
+}
+
+// ── 启动时续跑孤儿（2026-09-08）────────────────────────────────────────────
+// inflight/ 里还有文件 = 上次进程死时（发版 restart / 崩溃）没跑完的书。见 src/inflight.ts。
+// 先记次数再开跑：这一跑再被杀，下次启动才知道该放弃，不会无限重跑。
+async function resumeInflightJobs() {
+  const recs = await listInflight(INFLIGHT_DIR);
+  if (!recs.length) {
+    console.log("[inflight] 没有待续跑的任务");
+    return;
+  }
+  console.log(`[inflight] 发现 ${recs.length} 个上次没跑完的任务`);
+  for (const rec of recs) {
+    const id = inflightId(rec);
+    if (!canRetry(rec)) {
+      console.log(`[inflight] ${id} 已拉起 ${rec.attempts} 次仍未完成，放弃：标 failed + 退款 + 告警`);
+      await giveUpInflight(rec);
+      continue;
+    }
+    rec.attempts += 1;
+    await writeInflight(INFLIGHT_DIR, rec);
+    console.log(`[inflight] 续跑 ${id}（第 ${rec.attempts} 次）`);
+    if (rec.kind === "create") startBookJob(rec);
+    else runReviseJob(rec);
+  }
+}
+
+// 放弃一单：登记簿标 failed、退款（ref 幂等）、告警管理员、销档。每步尽力而为。
+async function giveUpInflight(rec: Inflight) {
+  const why = `服务重启后续跑 ${rec.attempts} 次仍未完成`;
+  try {
+    if (rec.kind === "create") {
+      const slug = rec.slug || (await findSlugByJobId(rec.jobId));
+      if (slug) await patchThreadEntry(slug, rec.startedAt, { status: "failed", error: why }).catch(() => {});
+      await refundBook(rec.auth, { ref: rec.jobId });
+      await notifyAdmin("写书任务放弃", `${rec.seed.slice(0, 40)} · ${why}` + (slug ? ` · ${slug}` : ""));
+    } else {
+      await patchThreadEntry(rec.slug, rec.entryTs, { status: "failed", error: why }).catch(() => {});
+      await refundBook(rec.auth, { ref: `${rec.slug}#${rec.entryTs}`, kind: "revise" });
+      await notifyAdmin("修书任务放弃", `${rec.slug} · ${why}`);
+    }
+  } catch (e) {
+    console.error("[inflight] give-up failed", e);
+  }
+  await removeInflight(INFLIGHT_DIR, rec);
 }
 
 async function handleBook(req: IncomingMessage, res: ServerResponse, payload: any) {
@@ -1243,7 +1331,12 @@ async function handleBookRevise(req: IncomingMessage, res: ServerResponse, paylo
   const entry: ThreadEntry = { ts: Date.now(), kind: "revise", instruction, status: "running" };
   meta.thread.push(entry);
   await writeBookMeta(meta);
-  runReviseJob(slug, meta.scope, bookAuthor(srcBook, meta), instruction, entry.ts, req.headers.authorization);
+  const rec: InflightRevise = {
+    kind: "revise", slug, scope: meta.scope, author: bookAuthor(srcBook, meta), instruction,
+    entryTs: entry.ts, auth: req.headers.authorization, startedAt: entry.ts, attempts: 1,
+  };
+  writeInflight(INFLIGHT_DIR, rec).catch((e) => console.error("[inflight] write failed", e));
+  runReviseJob(rec);
   res.writeHead(202, json).end(
     JSON.stringify({ ok: true, ts: entry.ts, charged_suanli: charge.body.charged_suanli, suanli: charge.body.suanli }),
   );
@@ -1669,4 +1762,8 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`claude-agent on http://${HOST}:${PORT}  model=${MODEL}  workspace=${WORKSPACE}`);
+  // 起来几秒再续跑孤儿：让端口先就绪、让 deploy.sh 的 status 检查有个干净窗口。
+  setTimeout(() => {
+    resumeInflightJobs().catch((e) => console.error("[inflight] resume failed", e));
+  }, 5000);
 });
