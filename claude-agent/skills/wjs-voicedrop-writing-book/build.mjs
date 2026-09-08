@@ -29,6 +29,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { checkChapterSource } from "./validate.mjs";
 
 const API = "https://jianshuo.dev/files/api";
 const SITE = "https://jianshuo.dev";
@@ -296,6 +297,15 @@ async function doIntro() {
 async function doChapter(no) {
   const b = readFrag(`chapters/${pad(no)}.html`);
   if (!b) { console.error(`缺 chapters/${pad(no)}.html`); process.exit(1); }
+  // 发布前最后一道闸：正文是空的、或整段是评审 JSON，一律不许上线。
+  // 2026-09-07 两种事故都是「status 标了 done，读者打开是空气」——见 validate.mjs。
+  const v = checkChapterSource(b);
+  if (!v.ok) {
+    console.error(`拒绝发布第 ${pad(no)} 章：${v.reason}`);
+    console.error(`  文件：${join(workdir, `chapters/${pad(no)}.html`)}`);
+    console.error(`  把正文写进这个文件再重跑；别让空章带着 done 上线。`);
+    process.exit(1);
+  }
   await upload(book.slug, chFile(no), renderChapter(book, no, b));
   await upload(book.slug, srcName(chFile(no)), b);
   await syncBookJson(book);   // 只重发单章也要让 _src 有入口，下次 pull 才不用手工重建
