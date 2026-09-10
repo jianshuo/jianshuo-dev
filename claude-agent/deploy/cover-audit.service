@@ -1,0 +1,20 @@
+[Unit]
+# 每天一次全量对账：书架 JSON + 工作目录里没封面的书（30 天内）排进队列。只入队不处理——
+# 处理交给 cover-sweeper.path 拉起的 run，避免两个进程抢同一本。
+Description=VoiceDrop book cover audit (enqueue books missing a cover)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=claude-agent
+Group=claude-agent
+WorkingDirectory=/opt/claude-agent
+Environment=HOME=/opt/claude-agent
+EnvironmentFile=/opt/claude-agent/.env
+ExecStart=/usr/bin/node /opt/claude-agent/dist/cover-sweeper.js audit
+TimeoutStartSec=10m
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/claude-agent

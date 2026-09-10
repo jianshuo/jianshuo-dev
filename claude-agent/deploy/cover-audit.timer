@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily cover audit
+
+[Timer]
+OnCalendar=*-*-* 04:15:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=cover-audit.service
+
+[Install]
+WantedBy=timers.target

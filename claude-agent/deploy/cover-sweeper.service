@@ -1,0 +1,22 @@
+[Unit]
+# 补封面任务（2026-09-10）。由 cover-sweeper.path（pending/ 非空）和 cover-sweeper-retry.timer（半小时搬到点的）拉起；
+# 队列为空时几十毫秒就退出。机制见 src/cover-queue.ts 头注释。
+# 安装：cp deploy/cover-*.{service,path,timer} /etc/systemd/system/ && systemctl daemon-reload
+#       && systemctl enable --now cover-sweeper.path cover-sweeper-retry.timer cover-audit.timer
+Description=VoiceDrop book cover sweeper (paint missing covers from the queue)
+After=network-online.target paint.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=claude-agent
+Group=claude-agent
+WorkingDirectory=/opt/claude-agent
+Environment=HOME=/opt/claude-agent
+EnvironmentFile=/opt/claude-agent/.env
+ExecStart=/usr/bin/node /opt/claude-agent/dist/cover-sweeper.js run
+TimeoutStartSec=2h
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/claude-agent
