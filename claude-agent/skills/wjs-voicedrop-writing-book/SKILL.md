@@ -6,7 +6,7 @@ description: 给一个词、一句话、或一篇文章，长成一本书，增�
 # wjs-voicedrop-writing-book — 一颗种子长成一本书（总调度）
 
 **输入**：一个词 / 一句话 / 一篇文章（任意一种）。
-**产出**：一本多章的书，发布到 R2 的 `books/<slug>/` 文件夹，经 **`jianshuo.dev/voicedrop/books/<slug>/`** 公共路由外网免 token 直达，界面淡雅，随写随发。公开入口是 `build.mjs` 跑完打印的那个 `.../voicedrop/books/<slug>/index.html` 链接。封面 `cover.jpg` **不归写书流程画**：收尾后服务端自动排队补画并上传（见第 6 步），写手最多留一个提示词文件。
+**产出**：一本多章的书，发布到 R2 的 `books/<slug>/` 文件夹，经 **`jianshuo.dev/voicedrop/books/<slug>/`** 公共路由外网免 token 直达，界面淡雅，随写随发。公开入口是 `build.mjs` 跑完打印的那个 `.../voicedrop/books/<slug>/index.html` 链接。最后再走一遍：给全书配一张带书名的封面文件 `cover.jpg`（只是个文件、不嵌正文，供 voicedrop 客户端取用）。
 
 **本 skill 管什么、不管什么**——
 
@@ -211,30 +211,22 @@ node ~/.claude/skills/wjs-voicedrop-writing-book/build.mjs intro book-<slug>
 
 ---
 
-## 第 6 步：封面不归你画（+ 必要时插图）
+## 第 6 步：最后一遍——封面（+ 必要时插图）
 
-### 封面 cover.jpg：交给「补封面」任务，你只留提示词
+**所有图片一律用 `/opt/claude-agent/bin/paint`（背后是 GPT 出图）生成**，timeout 设 600000ms。**绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas、自绘字…全禁）——包括封面上的文字，也让 GPT 直接画进图里。图片用 `build.mjs asset` 上传，内链一律相对，遵守两条硬约束。
 
-**封面不在写书流程里画。** 写书/修书一收尾，服务端自动把这本书排进补封面队列，由独立的 cover-sweeper 任务调 paint 画一张竖版 1024x1536 封面、上传成 `books/<slug>/cover.jpg`、把 `cover`/`coverAt` 写进 book.json——出图额度打穿它会自己等额度回来再画，你不用等、不用重试、不用管。
+> **插图密度按类型走**：科普书默认**不配**插图（除非某概念不画就讲不清）；绘本**以图为主**、几乎每页都要图；小说一般不配图或只配少量氛围图。具体规则见各写作 skill。这里只讲通用的封面。
 
-为什么这样：封面曾是最后一步，而书是边写边发的；引擎在末章和封面之间倒下（撞配额/换腿/重启）就留下一本没封面的书，出图和写书又共用一个 ChatGPT 额度池，最后几分钟最容易被打断。2026-09-02 到 09-09 的 96 本书里 16 本首发没封面，全是这个原因。
+### 封面 cover.jpg（每本都要，但只是个文件）
 
-你要做的只有一件**可选**的事——在工作目录留提示词，没有就按书名/副标题/作者用默认版式：
+一张竖版封面，存成 `<workdir>/cover.jpg`、用 `build.mjs asset` 传成 `books/<slug>/cover.jpg`。
 
-- `cover.prompt.txt`：一段完整的封面提示词。
-- 或 `cover.prompt.json`：`{"prompt": "…", "image": "refs/hero.png"}`，`image` 是工作目录里的参考图（绘本用它保证主角和内页一致）。
+- **它只是放在书目录里的一个文件，供别的工具（voicedrop 客户端）取用显示——不嵌进正文页/目录页**（`build.mjs` 不会把它渲染进任何 HTML）。
+- **必须有明显的书名**，有作者就写上作者；文字放在**抽象背景的空白区之上**。让 GPT 直接把文字画进图：提示词里描述抽象背景（随书配色、留白充足）+ **一字不差列出**书名/副标题/作者，并写明「画面上只允许出现这些文字，不要多余字符/水印/乱码」。中文书名 GPT 能画准，糊了就重跑或精简书名。
+- **默认大标题排版**：整张封面**以文字为主角**——主标题非常大、粗、占据上部约满宽（长了分两行）；副标题约为主标题一半大小、紧跟其下；作者中等、底部居中。背景退为衬托。
+- **尺寸固定用 `--size 1024x1536 --format jpeg`（竖版 1:1.5）**。gpt-image 只吃 `1024x1024`/`1024x1536`/`1536x1024` 三种，别乱填。
 
-提示词怎么写才出得好（默认版式就是这样）：**整张封面以文字为主角**——主标题非常大、粗、占据上部约满宽（长了分两行）；副标题约为主标题一半大小、紧跟其下；作者中等、底部居中；背景是随书配色、留白充足的抽象画面，退为衬托。**一字不差列出**书名/副标题/作者，并写明「画面上只允许出现这些文字，不要多余字符/水印/乱码」。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感）。
-
-**别做的事**：别自己调 paint 画封面、别 `build.mjs asset … cover.jpg`、别在收尾汇报里说「封面稍后补」之外的承诺。封面只是书目录里的一个文件，供 voicedrop 客户端取用显示，**不嵌进正文页/目录页**。修书模式里用户明确要求换封面除外（那时按第 5 步的 `asset` 走）。
-
-### 插图（按类型）
-
-**插图一律用 `/opt/claude-agent/bin/paint`（背后是 GPT 出图）生成**，timeout 设 600000ms。**绝不用任何本地生图/改图/叠字工具**（ImageMagick、PIL、canvas、自绘字…全禁）。图片用 `build.mjs asset` 上传，内链一律相对，遵守两条硬约束。gpt-image 只吃 `1024x1024`/`1024x1536`/`1536x1024` 三种尺寸，别乱填。
-
-> **插图密度按类型走**：科普书默认**不配**插图（除非某概念不画就讲不清）；绘本**以图为主**、几乎每页都要图；小说一般不配图或只配少量氛围图。具体规则见各写作 skill。
-
-插图别打乱正文「过审即发」的节奏。
+封面/插图都是最后一遍，别打乱正文「过审即发」的节奏。风格拿不准参考 `wjs-voicedrop-choosing-cover`（淡雅、浅底、别廉价海报感），封面气质也随书的类型走。
 
 ---
 
@@ -276,10 +268,9 @@ await pipeline(batchOf(book.chapters),
 - 正文片段里写内联 `style` / `<h1>` → 破坏淡雅基调，交给模板。
 - 内链出现根绝对路径 `/voicedrop/books/…` → 违反硬约束 1，改回相对文件名。
 - 页面出现 Google Fonts 或任何外部 CSS/JS/字体 → 违反硬约束 2，删掉、只用系统字体栈。
-- 用了本地生图/改图/叠字工具 → 违反「图片全走 paint(GPT)」，重做。
+- 用了本地生图/改图/叠字工具 → 违反「图片全走 paint(GPT)」，重做；封面文字也让 GPT 画进图。
 - 把 cover.jpg 渲染进正文/目录页 → 封面只是文件、供别的工具取用，不进 HTML。
-- 自己调 paint 画封面、或因为封面没出来而反复重试/干等 → 封面归补封面任务管，你只留 `cover.prompt.txt`，收尾走人。
-- 换腿/重启后续跑只信本地 `build.mjs status` → 上一条腿可能死在 `build.mjs done` 中途（章页传了、目录没刷），收尾前必跑一次 `build.mjs index`。
+- 封面没有清晰可读的书名 → 不合格，重画。
 
 ---
 
@@ -288,5 +279,4 @@ await pipeline(batchOf(book.chapters),
 - `build.mjs`（本目录，Node ≥ 20）：组装淡雅页面 + 发布到 R2 `books/<slug>/`（经 `/voicedrop/books/` 公开、打印公开链接）。所有书类型通用。
 - 写作 skill（按类型选一个读进来）：`wjs-voicedrop-writing-explainary-book`（科普书）/ `wjs-voicedrop-writing-chidrens-book`（绘本）/ `wjs-voicedrop-writing-novel`（小说）。
 - 认证：`wjs-voicedrop`（`~/.config/voicedrop/credentials`）。
-- 可选：`/opt/claude-agent/bin/paint`（插图）、`wjs-voicedrop-choosing-cover`（封面提示词风格）。
-- 封面由服务端的 cover-sweeper（`/opt/claude-agent/dist/cover-sweeper.js`，systemd path 单元触发）补画，不在本 skill 里跑。
+- 可选：`/opt/claude-agent/bin/paint`（配图）、`wjs-voicedrop-choosing-cover`（配图风格）。

@@ -20,7 +20,6 @@ import {
   writeInflight, removeInflight, listInflight, canRetry, inflightId,
   type Inflight, type InflightCreate, type InflightRevise,
 } from "./inflight.js";
-import { enqueueCover } from "./cover-queue.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -473,9 +472,7 @@ const CODEX_BOOK_PREAMBLE =
   `你没有并行子代理，也没有 Workflow——skill 里说 spawn 写手/评审 subagent 的地方，一律由你自己分步串行扮演：` +
   `写完一章，抛开写作时的思路，按该类型的评审维度独立重读打分并把意见落盘 reviews/NN.json；` +
   `不过就照 must_fix 重写（最多 3 轮），过审立刻 build.mjs done 发布，绝不攒到最后。\n` +
-  `其余约定（工作目录、book.json、边写边发、断点续跑）一律照 skill 执行。` +
-  `封面不归你画：收尾后服务端自动排队补画并上传（想指定风格就在工作目录留 cover.prompt.txt）；` +
-  `插图才用 /opt/claude-agent/bin/paint。`;
+  `其余约定（工作目录、book.json、边写边发、断点续跑、封面用 /opt/claude-agent/bin/paint）一律照 skill 执行。`;
 
 type CodexOutcome = { ok: boolean; threadId: string; reply: string; error: string };
 
@@ -591,9 +588,7 @@ function runLeg(leg: BookLeg, prompt: string, onThread?: (id: string) => void): 
 const RESUME_HINT =
   `\n\n补充（本单已换过引擎）：上一次尝试因引擎配额中断，可能已经写了一部分——` +
   `动笔前先列一下 ${WORKSPACE}/ 下本单的工作目录，如果已有 book.json / 章节 / reviews，` +
-  `就接着把它写完并发布，**不要另起一本新书、不要换 slug**；` +
-  `别只信本地 build.mjs status——上一条腿可能死在 build.mjs done 命令中途（章页传了、目录没刷），` +
-  `收尾前跑一次 build.mjs index 把目录和 _src/book.json 刷齐。封面不用管（收尾后自动补）。`;
+  `就接着把它写完并发布，**不要另起一本新书、不要换 slug**。`;
 
 // 服务重启后续跑的补充提示。与换腿的 RESUME_HINT 同理但原因不同、要求更具体：
 // 半成品可能已经很完整——9/8《嘟嘟和山上的灯塔》被 restart 杀掉时 14 页 14 图全在，
@@ -602,8 +597,8 @@ function resumeAfterRestartHint(jobId?: string): string {
   return (
     `\n\n补充（本单是服务器重启后的续跑）：上一次尝试被服务重启打断，很可能已经写了一部分甚至接近完成——` +
     `动笔前先列一下 ${WORKSPACE}/ 下本单的工作目录` + (jobId ? `（book.json 里 jobId=「${jobId}」的那个）` : "") +
-    `，用 build.mjs status 看每章是 done / 待发(有稿) / 待写：有稿的直接发布，缺的补写，最后 build.mjs index 刷一次目录。` +
-    `封面不用管（收尾后自动补）。**不要另起一本新书、不要换 slug、不要重画已有的插图、不要重写已过审的章节。**`
+    `，用 build.mjs status 看每章是 done / 待发(有稿) / 待写：有稿的直接发布，缺的补写，缺封面就补封面。` +
+    `**不要另起一本新书、不要换 slug、不要重画已有的插图、不要重写已过审的章节。**`
   );
 }
 
@@ -719,19 +714,7 @@ function runCodexExec(prompt: string, onThread?: (id: string) => void): Promise<
 const BOOKMETA_DIR = process.env.BOOKMETA_DIR ?? join(__dirname, "..", "bookmeta");
 // 在飞登记（2026-09-08）：开工落档、引擎返回即销档；启动时还在 = 孤儿，续跑。见 src/inflight.ts。
 const INFLIGHT_DIR = process.env.INFLIGHT_DIR ?? join(__dirname, "..", "inflight");
-// 补封面队列（2026-09-10）：写书/修书收尾往 pending/ 丢一个 <slug>.json（dirty 标记），
-// systemd path 单元拉起 cover-sweeper 画封面并上传；写书腿自己不再画封面。见 src/cover-queue.ts。
-const COVER_QUEUE_DIR = process.env.COVER_QUEUE_DIR ?? join(__dirname, "..", "cover-queue");
 const FILES_API = "https://jianshuo.dev/files/api";
-
-async function queueCover(slug: string, reason: string): Promise<void> {
-  try {
-    const st = await enqueueCover(COVER_QUEUE_DIR, slug, reason);
-    console.log(`[cover] enqueue slug=${slug} reason=${reason} → ${st}`);
-  } catch (e) {
-    console.error(`[cover] enqueue failed slug=${slug}`, e);
-  }
-}
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 type ThreadEntry = {
@@ -1150,8 +1133,6 @@ function startBookJob(rec: InflightCreate) {
           await registerBookPost(auth, slug);   // 先登记社区帖，推送里的书立刻可在社区看到
           await notifyBookDone(auth, slug, title);
         }
-        // 成败都入队：失败的书往往章节已上线只差封面；sweeper 看线上有封面就只补标记，很便宜。
-        await queueCover(slug, ok ? "book-done" : "book-failed");
       } else {
         await mkdir(BOOKMETA_DIR, { recursive: true });
         await writeFile(
@@ -1195,7 +1176,6 @@ function runReviseJob(rec: InflightRevise) {
       });
       console.log(`[revise] done slug=${slug} thread=${out.threadId || "-"}` + (out.ok ? "" : ` ERROR=${out.error}`));
       if (out.ok) await registerBookPost(auth, slug);   // 标题/hidden/章节数可能变了——刷新书帖
-      await queueCover(slug, out.ok ? "revise-done" : "revise-failed");
       if (!out.ok) {
         await notifyAdmin("修书任务失败", `${slug} · 腿=${BOOK_LEGS.join("→")} · ${String(out.error || "").slice(0, 100)}`);
         await refundBook(auth, { ref: `${slug}#${entryTs}`, kind: "revise" });   // 修书没改成——退回预扣的 40
