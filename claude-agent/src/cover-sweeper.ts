@@ -349,16 +349,11 @@ async function run(): Promise<void> {
   await ensureCoverQueue(ROOT);
   const woke = await wakeDueCovers(ROOT);
   if (woke.length) log(`到点回队列：${woke.join(", ")}`);
-  // 循环取件直到 pending/ 真空：处理一本要一两分钟，期间新到的书要在同一轮接着做，
-  // 不能当成「没处理完的残留」。每本只处理一次（done 的会删、失败的会挪走，正常不会再见到）。
-  const seen = new Set<string>();
-  for (;;) {
-    const batch = (await listCoverItems(ROOT, "pending")).filter((p) => !seen.has(p.slug));
-    if (!batch.length) break;            // 没活，安静退出
-    log(`待处理 ${batch.length} 本：${batch.map((p) => p.slug).join(", ")}`);
-    for (const item of batch) { seen.add(item.slug); await processItem(item); }
-  }
-  // 不变量：pending/ 现在必须为空（path 单元会立刻重查目录）。处理过还留在这里 = 代码有洞，挪走别空转。
+  const pending = await listCoverItems(ROOT, "pending");
+  if (!pending.length) return;           // 没活，安静退出
+  log(`待处理 ${pending.length} 本：${pending.map((p) => p.slug).join(", ")}`);
+  for (const item of pending) await processItem(item);
+  // 不变量：pending/ 现在必须为空（path 单元会立刻重查目录）
   const left = await listCoverItems(ROOT, "pending");
   if (left.length) {
     log(`⚠ pending/ 里还剩 ${left.map((p) => p.slug).join(", ")}，挪到 waiting 防止 path 单元空转`);
